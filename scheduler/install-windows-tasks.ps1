@@ -1,8 +1,9 @@
-# Windows 任务计划安装脚本 —— 让调度器开机自启 + 自愈
-# 用法：powershell -ExecutionPolicy Bypass -File install-windows-tasks.ps1
-# 需要管理员权限（右键 PowerShell 以管理员运行），会创建两个计划任务：
-#   dsh-scheduler-daemon    登录时启动（隐藏窗口） scheduler.mjs --daemon
-#   dsh-scheduler-heartbeat 每5分钟检查 daemon，挂了自动拉起
+# Install Windows scheduled tasks for the dsh scheduler.
+# Run as Administrator:
+#   powershell -ExecutionPolicy Bypass -File install-windows-tasks.ps1
+# Creates two tasks:
+#   dsh-scheduler-daemon    start daemon (hidden) at logon
+#   dsh-scheduler-heartbeat every 5 min, restart daemon if dead
 $ErrorActionPreference = "Stop"
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -19,15 +20,14 @@ function New-HiddenTask($taskName, $extraArgs, $trigger) {
 }
 
 try {
-    # 1. 登录时启动常驻 daemon
     New-HiddenTask "dsh-scheduler-daemon" "--daemon" (New-ScheduledTaskTrigger -AtLogOn)
-    # 2. 每5分钟自愈检查
     New-HiddenTask "dsh-scheduler-heartbeat" "--ensure-daemon" (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5))
     Write-Host ""
-    Write-Host "已注册两个计划任务。立即测试 daemon："
-    Write-Host "  & '$node' '$scheduler' --daemon"
-    Write-Host "日志：$here\scheduler.log"
+    Write-Host "Registered. Manual start test:"
+    Write-Host "  node `"$scheduler`" --daemon"
+    Write-Host "Log: $here\scheduler.log"
 } catch {
-    Write-Host "[!] 注册失败：$($_.Exception.Message)"
-    Write-Host "    请用管理员身份运行本脚本，或手动启动：& '$node' '$scheduler' --daemon"
+    Write-Host "[!] Registration failed: $($_.Exception.Message)"
+    Write-Host "    Run this script as Administrator, or start the daemon manually:"
+    Write-Host "  node `"$scheduler`" --daemon"
 }
