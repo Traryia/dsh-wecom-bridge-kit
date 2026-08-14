@@ -1,0 +1,12 @@
+# 依赖（由 install.mjs 安装）
+node_modules/
+
+# 含真实凭据/状态的本地文件（勿提交）
+wecom-aibot/wecom-aibot.config.json
+wechat-clawbot/wechat-clawbot.state.json
+wechat-clawbot/wechat-qrcode.*
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
