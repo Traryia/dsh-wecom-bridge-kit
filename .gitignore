@@ -4,7 +4,17 @@ node_modules/
 # 含真实凭据/状态的本地文件（勿提交）
 wecom-aibot/wecom-aibot.config.json
 wechat-clawbot/wechat-clawbot.state.json
+wechat-clawbot/contacts.json
+wecom-aibot/contacts.json
 wechat-clawbot/wechat-qrcode.*
+wechat-clawbot/*.pid
+wecom-aibot/*.pid
+wechat-clawbot/outbox/
+wecom-aibot/outbox/
+scheduler/tasks.config.json
+scheduler/scheduler.pid
+scheduler/scheduler.log
+scheduler/bridge.log
 *.log
 
 # 系统文件
