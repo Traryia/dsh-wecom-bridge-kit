@@ -12,6 +12,7 @@
 | `brain-plugin.js` | 大脑插件：注册 `/wecom/ask`（消息→AI 回复）与 `/wecom/status`（诊断），粘贴进 `cordis_define` 即可 | Harness 会话内 |
 | `wecom-aibot/` | 企业微信**智能机器人**通道（官方 WebSocket 长连接，无需公网 URL） | Node 进程 |
 | `wechat-clawbot/` | **个人微信 ClawBot** 通道（腾讯官方 iLink Bot API，扫码登录） | Node 进程 |
+| `scheduler/` | **定时任务**：定时推送、定时执行脚本、桥接进程自愈（watchdog） | Node 进程 |
 | `install.mjs` | 一键安装两个通道的 npm 依赖并生成配置模板 | Node |
 
 两个通道共用同一个大脑（`/wecom/ask`），所以**每台机器只需定义一次大脑插件**，再按需启动一个或两个桥。

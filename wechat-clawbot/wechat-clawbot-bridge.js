@@ -8,14 +8,47 @@
 const fs = require('fs')
 const path = require('path')
 
+// 文件日志：detached 运行（watchdog 托管）时 stdout 不可见，全部写入 bridge.log
+const LOG_FILE = path.join(__dirname, 'bridge.log')
+function tee(orig, tag) {
+  return (...args) => {
+    try {
+      fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${tag} ` + args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n')
+    } catch (e) {}
+    orig(...args)
+  }
+}
+console.log = tee(console.log, 'log')
+console.error = tee(console.error, 'err')
+
 const BASE_URL = 'https://ilinkai.weixin.qq.com'
 const ASK_URL = process.env.WECOM_ASK_URL || 'http://127.0.0.1:3080/wecom/ask'
 const STATE_FILE = path.join(__dirname, 'wechat-clawbot.state.json')
+const CONTACTS_FILE = path.join(__dirname, 'contacts.json')
+const OUTBOX_DIR = path.join(__dirname, 'outbox')
+const PID_FILE = path.join(__dirname, 'wechat-clawbot.pid')
 const SESSION_DURATION_MS = 24 * 3600 * 1000
 const SCAN_TIMEOUT_MS = 10 * 60 * 1000
 const REQ_TIMEOUT_MS = 45000
 
+// 写 PID 文件（供 watchdog 使用）
+try {
+  fs.mkdirSync(OUTBOX_DIR, { recursive: true })
+  fs.writeFileSync(PID_FILE, String(process.pid))
+} catch (e) {}
+process.on('exit', () => { try { fs.unlinkSync(PID_FILE) } catch (e) {} })
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// 联系人持久化：记录每个用户最近的 context_token（主动推送必需）
+let contacts = {}
+function loadContacts() {
+  try { contacts = JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8')) } catch (e) { contacts = {} }
+}
+function saveContacts() {
+  try { fs.writeFileSync(CONTACTS_FILE, JSON.stringify(contacts)) } catch (e) {}
+}
+loadContacts()
 
 let botToken = null
 let botBaseUrl = BASE_URL
@@ -85,18 +118,7 @@ async function saveQr(content) {
       fs.writeFileSync(file, Buffer.from(b64, 'base64'))
       return file
     }
-    if (str.startsWith('http')) {
-      // 可选项：安装 qrcode 后自动把 URL 渲染成可扫描的 PNG
-      try {
-        const QRCode = require('qrcode')
-        const file = path.join(__dirname, 'wechat-qrcode.png')
-        await new Promise((resolve, reject) => {
-          QRCode.toFile(file, str, { width: 480, margin: 2 }, (e) => (e ? reject(e) : resolve()))
-        })
-        console.log('[clawbot] QR image saved to:', file)
-      } catch (e) {}
-      return str
-    }
+    if (str.startsWith('http')) return str
     if (str.startsWith('<svg')) {
       const file = path.join(__dirname, 'wechat-qrcode.svg')
       fs.writeFileSync(file, str)
@@ -178,6 +200,46 @@ async function sendText(toId, contextToken, text) {
   })
 }
 
+// outbox 主动推送队列：调度器写入 outbox/*.json ({to, text})，此处消费发送
+// to 支持具体用户 id 或 "last"（最近联系人）
+async function pollOutbox() {
+  loadContacts() // 每轮重新读取，支持外部更新
+  let files = []
+  try {
+    files = fs.readdirSync(OUTBOX_DIR).filter((f) => f.endsWith('.json') && !f.startsWith('failed-'))
+  } catch (e) {
+    return
+  }
+  for (const f of files) {
+    const fp = path.join(OUTBOX_DIR, f)
+    try {
+      const item = JSON.parse(fs.readFileSync(fp, 'utf8'))
+      let to = item.to || 'last'
+      let token = null
+      if (to === 'last') {
+        let best = null
+        for (const [uid, c] of Object.entries(contacts)) {
+          if (!best || c.lastAt > best.c.lastAt) best = { uid, c }
+        }
+        if (best) {
+          to = best.uid
+          token = best.c.contextToken
+        }
+      } else {
+        const c = contacts[to]
+        token = c ? c.contextToken : null
+      }
+      if (!token) throw new Error('no context token for target: ' + to)
+      await sendText(to, token, String(item.text || ''))
+      try { fs.unlinkSync(fp) } catch (e) {}
+      console.log('[clawbot] outbox sent to', to)
+    } catch (e) {
+      console.error('[clawbot] outbox failed:', f, '-', e.message)
+      try { fs.renameSync(fp, path.join(OUTBOX_DIR, 'failed-' + f)) } catch (e2) {}
+    }
+  }
+}
+
 async function askHarness(from, content) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 200000)
@@ -205,6 +267,10 @@ async function handleMessage(msg) {
   const contextToken = msg.context_token
   if (!fromId || !text) return
   console.log('[clawbot] text from', fromId, ':', String(text).slice(0, 80))
+
+  // 更新联系人 token（供定时主动推送使用）
+  contacts[fromId] = { contextToken, lastAt: Date.now() }
+  saveContacts()
 
   if (!welcomed.has(fromId)) {
     welcomed.add(fromId)
@@ -308,5 +374,5 @@ async function reconnectLoop() {
   } else {
     console.log('[clawbot] restored session from state file, expires', new Date(loginTime + SESSION_DURATION_MS).toISOString())
   }
-  await Promise.all([messageLoop(), reconnectLoop()])
+  await Promise.all([messageLoop(), reconnectLoop(), (async () => { while (true) { await sleep(3000); await pollOutbox().catch((e) => console.error('[clawbot] outbox error:', e.message)) } })()])
 })()

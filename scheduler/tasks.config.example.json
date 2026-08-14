@@ -1,0 +1,39 @@
+{
+  "askUrl": "http://127.0.0.1:3080/wecom/ask",
+  "bridges": {
+    "wechat": { "dir": "../wechat-clawbot", "pidFile": "wechat-clawbot.pid", "script": "wechat-clawbot-bridge.js" },
+    "wecom": { "dir": "../wecom-aibot", "pidFile": "wecom-aibot.pid", "script": "wecom-aibot-bridge.js" }
+  },
+  "tasks": [
+    {
+      "id": "bridge-watchdog",
+      "type": "watchdog",
+      "cron": "*/5 * * * *",
+      "description": "每5分钟检查两个桥接进程，挂了自动拉起"
+    },
+    {
+      "id": "morning-report-wechat",
+      "type": "push",
+      "channel": "wechat",
+      "cron": "0 9 * * *",
+      "to": "last",
+      "content": { "mode": "agent", "prompt": "写一份简短的工作日报：今日主要事项、明日计划，60字以内。" },
+      "description": "每天早上9点，让AI生成日报推送到微信"
+    },
+    {
+      "id": "hourly-wecom-remind",
+      "type": "push",
+      "channel": "wecom",
+      "cron": "30 10 * * *",
+      "content": { "text": "⏰ 定时提醒：记得喝水休息一下" },
+      "description": "每天10:30给企微推一条文字提醒"
+    },
+    {
+      "id": "nightly-cleanup",
+      "type": "shell",
+      "cron": "0 3 * * *",
+      "command": "powershell -NoProfile -Command \"Remove-Item D:/workspace/tmp/* -Recurse -Force -ErrorAction SilentlyContinue\"",
+      "description": "每天凌晨3点清理临时目录（示例，请按需修改）"
+    }
+  ]
+}
