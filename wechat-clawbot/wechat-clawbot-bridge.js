@@ -204,6 +204,7 @@ async function sendText(toId, contextToken, text) {
 // to 支持具体用户 id 或 "last"（最近联系人）
 async function pollOutbox() {
   loadContacts() // 每轮重新读取，支持外部更新
+  try { fs.writeFileSync(PID_FILE, String(process.pid)) } catch (e) {} // 心跳：更新 pid 文件 mtime 供 watchdog 存活探测
   let files = []
   try {
     files = fs.readdirSync(OUTBOX_DIR).filter((f) => f.endsWith('.json') && !f.startsWith('failed-'))

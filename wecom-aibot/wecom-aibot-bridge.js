@@ -134,6 +134,7 @@ wsClient.on('event.enter_chat', (frame) => {
 // outbox 主动推送队列：调度器写入 outbox/*.json ({to, text})，此处通过 WS 发送
 async function pollOutbox() {
   loadContacts() // 每轮重新读取，支持外部更新
+  try { fs.writeFileSync(PID_FILE, String(process.pid)) } catch (e) {} // 心跳：更新 pid 文件 mtime 供 watchdog 存活探测
   let files = []
   try {
     files = fs.readdirSync(OUTBOX_DIR).filter((f) => f.endsWith('.json') && !f.startsWith('failed-'))

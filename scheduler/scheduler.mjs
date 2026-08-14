@@ -7,7 +7,7 @@
 //   node scheduler.mjs --ensure-daemon   # 若 daemon 不在运行则拉起（供系统自愈调用）
 // 配置: tasks.config.json（可用环境变量 SCHEDULER_CONFIG 覆盖路径）
 import { spawn, execFile } from 'node:child_process'
-import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -55,6 +55,27 @@ function cronMatch(cron, d) {
 function isAlive(pid) {
   if (!pid) return false
   try { process.kill(pid, 0); return true } catch (e) { return false }
+}
+
+// 存活探测：process.kill 快路径 + pid 文件 mtime 兜底。
+// process.kill(pid,0) 在跨受限令牌（如沙箱启动的进程）时会误报死亡导致重复拉起，
+// 所以 kill 判定失败时回退到 mtime 新鲜度——同令牌即时判定，跨令牌不误杀。
+function aliveByPidFile(file, maxAgeMs) {
+  try {
+    const st = statSync(file)
+    if (!st.isFile()) return false
+    const pid = parseInt(readFileSync(file, 'utf8'), 10)
+    if (!Number.isInteger(pid) || pid <= 0) return false
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (e) {
+      /* kill 失败可能是真死，也可能是跨令牌误报——用 mtime 兜底判定 */
+    }
+    return Date.now() - st.mtimeMs < maxAgeMs
+  } catch (e) {
+    return false
+  }
 }
 
 function bridgeDir(cfg, name) {
@@ -116,9 +137,10 @@ function shellTask(cfg, task) {
 function watchdogTask(cfg, task) {
   for (const [name, b] of Object.entries(cfg.bridges || {})) {
     const dir = path.isAbsolute(b.dir) ? b.dir : path.resolve(__dirname, b.dir)
+    const pidFile = path.join(dir, b.pidFile)
+    if (aliveByPidFile(pidFile, 2 * 60 * 1000)) continue
     let pid = null
-    try { pid = parseInt(readFileSync(path.join(dir, b.pidFile), 'utf8'), 10) } catch (e) {}
-    if (pid && isAlive(pid)) continue
+    try { pid = parseInt(readFileSync(pidFile, 'utf8'), 10) } catch (e) {}
     log(`[watchdog] ${name} DOWN (pid=${pid}), restarting...`)
     try {
       const child = spawn(process.execPath, [b.script], { cwd: dir, detached: true, stdio: 'ignore' })
@@ -166,10 +188,8 @@ if (args.includes('--once')) {
 }
 
 if (args.includes('--ensure-daemon')) {
-  let pid = null
-  try { pid = parseInt(readFileSync(DAEMON_PID, 'utf8'), 10) } catch (e) {}
-  if (pid && isAlive(pid)) {
-    console.log('daemon alive (pid ' + pid + ')')
+  if (aliveByPidFile(DAEMON_PID, 3 * 60 * 1000)) {
+    console.log('daemon alive (pid ' + readFileSync(DAEMON_PID, 'utf8') + ')')
     process.exit(0)
   }
   log('daemon not running, starting...')
@@ -185,7 +205,9 @@ try { writeFileSync(DAEMON_PID, String(process.pid)) } catch (e) {}
 const cfg = loadConfig()
 log(`scheduler daemon started (pid ${process.pid}), ${cfg.tasks.length} tasks, tick ${TICK_MS}ms`)
 const lastRun = new Map()
+const touchPid = () => { try { writeFileSync(DAEMON_PID, String(process.pid)) } catch (e) {} }
 const tick = async () => {
+  touchPid() // 心跳：更新 pid 文件 mtime，供 ensure-daemon / 外部存活探测使用
   const d = new Date()
   const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()} ${d.getHours()}:${d.getMinutes()}`
   for (const t of cfg.tasks) {
